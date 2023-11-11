@@ -55,8 +55,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 class CameraSession(private val context: Context, private val cameraManager: CameraManager, private val callback: CameraSessionCallback) :
-  Closeable,
-  CoroutineScope {
+        Closeable,
+        CoroutineScope {
   companion object {
     private const val TAG = "CameraSession"
 
@@ -137,6 +137,9 @@ class CameraSession(private val context: Context, private val cameraManager: Cam
         }
         if (diff.sidePropsChanged) {
           // 3. zoom etc changed, update repeating request
+          if (captureSession == null || cameraDevice == null){
+            return
+          }
           configureCaptureRequest(config)
         }
 
@@ -177,22 +180,39 @@ class CameraSession(private val context: Context, private val cameraManager: Cam
 
   fun createPreviewView(context: Context): PreviewView {
     val previewView = PreviewView(
-      context,
-      object : SurfaceHolder.Callback {
-        override fun surfaceCreated(holder: SurfaceHolder) {
-          Log.i(TAG, "PreviewView Surface created! ${holder.surface}")
-          createPreviewOutput(holder.surface)
-        }
+            context,
+            object : SurfaceHolder.Callback {
+              override fun surfaceCreated(holder: SurfaceHolder) {
+                Log.i(TAG, "PreviewView Surface created! ${holder.surface}")
+                createPreviewOutput(holder.surface)
+              }
 
-        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-          Log.i(TAG, "PreviewView Surface updated! ${holder.surface} $width x $height")
-        }
+              override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+                Log.i(TAG, "PreviewView Surface updated! ${holder.surface} $width x $height")
+              }
 
-        override fun surfaceDestroyed(holder: SurfaceHolder) {
-          Log.i(TAG, "PreviewView Surface destroyed! ${holder.surface}")
-          destroyPreviewOutputSync()
-        }
-      }
+              override fun surfaceDestroyed(holder: SurfaceHolder) {
+                Log.i(TAG, "PreviewView Surface destroyed! ${holder.surface}")
+                destroyPreviewOutputSync()
+                /*
+                captureSession?.close()
+                captureSession = null
+                cameraDevice?.close()
+                cameraDevice = null
+
+                // Destroy previous outputs
+                photoOutput?.close()
+                photoOutput = null
+                videoOutput?.close()
+                videoOutput = null
+                previewOutput?.close()
+                previewOutput = null
+                codeScannerOutput?.close()
+                codeScannerOutput = null
+                */
+                close()
+              }
+            }
     )
     this.previewView = previewView
     return previewView
@@ -228,6 +248,7 @@ class CameraSession(private val context: Context, private val cameraManager: Cam
     cameraDevice = cameraManager.openCamera(cameraId, { device, error ->
       if (this.cameraDevice == device) {
         Log.e(TAG, "Camera Device $device has been disconnected!", error)
+        isRunning = false
         callback.onError(error)
       } else {
         // a previous device has been disconnected, but we already have a new one.
@@ -298,11 +319,11 @@ class CameraSession(private val context: Context, private val cameraManager: Cam
 
       Log.i(TAG, "Adding ${size.width} x ${size.height} Video Output in Format #$imageFormat...")
       val videoPipeline = VideoPipeline(
-        size.width,
-        size.height,
-        video.config.pixelFormat,
-        isSelfie,
-        video.config.enableFrameProcessor
+              size.width,
+              size.height,
+              video.config.pixelFormat,
+              isSelfie,
+              video.config.enableFrameProcessor
       )
       val output = VideoPipelineOutput(videoPipeline, configuration.enableHdr)
       outputs.add(output.toOutputConfiguration(characteristics))
@@ -323,10 +344,10 @@ class CameraSession(private val context: Context, private val cameraManager: Cam
 
       Log.i(TAG, "Adding ${size.width} x ${size.height} Preview Output...")
       val output = SurfaceOutput(
-        preview.config.surface,
-        size,
-        SurfaceOutput.OutputType.PREVIEW,
-        configuration.enableHdr
+              preview.config.surface,
+              size,
+              SurfaceOutput.OutputType.PREVIEW,
+              configuration.enableHdr
       )
       outputs.add(output.toOutputConfiguration(characteristics))
       previewOutput = output
@@ -406,7 +427,7 @@ class CameraSession(private val context: Context, private val cameraManager: Cam
       VideoStabilizationMode.STANDARD -> {
         // TODO: Check if that stabilization mode is even supported
         val mode = if (Build.VERSION.SDK_INT >=
-          Build.VERSION_CODES.TIRAMISU
+                Build.VERSION_CODES.TIRAMISU
         ) {
           CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_PREVIEW_STABILIZATION
         } else {
@@ -441,15 +462,16 @@ class CameraSession(private val context: Context, private val cameraManager: Cam
     // Start repeating request if the Camera is active
     val request = captureRequest.build()
     captureSession.setRepeatingRequest(request, null, null)
+    isRunning = true
   }
 
   suspend fun takePhoto(
-    qualityPrioritization: QualityPrioritization,
-    flashMode: Flash,
-    enableShutterSound: Boolean,
-    enableRedEyeReduction: Boolean,
-    enableAutoStabilization: Boolean,
-    outputOrientation: Orientation
+          qualityPrioritization: QualityPrioritization,
+          flashMode: Flash,
+          enableShutterSound: Boolean,
+          enableRedEyeReduction: Boolean,
+          enableAutoStabilization: Boolean,
+          outputOrientation: Orientation
   ): CapturedPhoto {
     val captureSession = captureSession ?: throw CameraNotReadyError()
     val photoOutput = photoOutput ?: throw PhotoNotEnabledError()
@@ -461,14 +483,14 @@ class CameraSession(private val context: Context, private val cameraManager: Cam
     val cameraCharacteristics = cameraManager.getCameraCharacteristics(captureSession.device.id)
     val orientation = outputOrientation.toSensorRelativeOrientation(cameraCharacteristics)
     val captureRequest = captureSession.device.createPhotoCaptureRequest(
-      cameraManager,
-      photoOutput.surface,
-      zoom,
-      qualityPrioritization,
-      flashMode,
-      enableRedEyeReduction,
-      enableAutoStabilization,
-      orientation
+            cameraManager,
+            photoOutput.surface,
+            zoom,
+            qualityPrioritization,
+            flashMode,
+            enableRedEyeReduction,
+            enableAutoStabilization,
+            orientation
     )
     Log.i(TAG, "Photo capture 1/3 - starting capture...")
     val result = captureSession.capture(captureRequest, enableShutterSound)
@@ -499,12 +521,12 @@ class CameraSession(private val context: Context, private val cameraManager: Cam
   }
 
   suspend fun startRecording(
-    enableAudio: Boolean,
-    codec: VideoCodec,
-    fileType: VideoFileType,
-    bitRate: Double?,
-    callback: (video: RecordingSession.Video) -> Unit,
-    onError: (error: RecorderError) -> Unit
+          enableAudio: Boolean,
+          codec: VideoCodec,
+          fileType: VideoFileType,
+          bitRate: Double?,
+          callback: (video: RecordingSession.Video) -> Unit,
+          onError: (error: RecorderError) -> Unit
   ) {
     mutex.withLock {
       if (recording != null) throw RecordingInProgressError()
@@ -513,7 +535,7 @@ class CameraSession(private val context: Context, private val cameraManager: Cam
       val fps = configuration?.fps ?: 30
 
       val recording =
-        RecordingSession(context, videoOutput.size, enableAudio, fps, codec, orientation, fileType, bitRate, callback, onError)
+              RecordingSession(context, videoOutput.size, enableAudio, fps, codec, orientation, fileType, bitRate, callback, onError)
       recording.start()
       this.recording = recording
     }
@@ -591,11 +613,11 @@ class CameraSession(private val context: Context, private val cameraManager: Cam
   }
 
   data class CapturedPhoto(
-    val image: Image,
-    val metadata: TotalCaptureResult,
-    val orientation: Orientation,
-    val isMirrored: Boolean,
-    val format: Int
+          val image: Image,
+          val metadata: TotalCaptureResult,
+          val orientation: Orientation,
+          val isMirrored: Boolean,
+          val format: Int
   ) : Closeable {
     override fun close() {
       image.close()
